@@ -4,23 +4,22 @@ message2: .asciiz "Average pixel value of new image:\n"
 buffer:      .space  49165
 input_file:  .asciiz "input_file.ppm"
 output_file: .asciiz "output_file.ppm"
-output_data:  .space  100
-stack: .space 100
+output_data:  .space  5
+stack: .space 10
 totalOriginalPixels:  .word 0     # value of original pixels added up
 totalNewPixels: .word 0           # value of new pixels added up
 totalToDivideBy: .word 3133440    # 64 x 64 x 3 x 255
 old_average: .double 0.0
 new_average: .double 0.0
 first_four_lines: .asciiz "P3\n# Jet\n64 64\n255\n"
-newline: .asciiz "\n"
 
 .text
 .globl main
 main: 
     #loading totals into $s registers
-        la $s4, totalOriginalPixels
-        la $s5, totalNewPixels
-        la $s6, totalToDivideBy
+        lw $s4, totalOriginalPixels
+        lw $s5, totalNewPixels
+        lw $s6, totalToDivideBy
         
         # Open file for reading
         li $v0, 13          # open file
@@ -33,7 +32,7 @@ main:
         # Open file for writing 
         li $v0, 13          # syscall: open file
         la $a0, output_file  # load address of output file
-        li $a1, 577           # open for writing (write only or create)
+        li $a1, 1           # open for writing (O_WRONLY - open for writing only)
         li $a2, 0           # mode
         syscall
         
@@ -48,6 +47,7 @@ main:
         li $a2, 49165    #number of bytes to read 
         syscall         
         
+        beqz $v0, end_of_file #exit loop if read returns zero
         
         la $t0, buffer      #load address of the buffer
         li $t5, 0           #stores current pixel value
@@ -80,8 +80,7 @@ main:
     
     add_ten:
         add $s4, $s4, $t5               # Add to totalOriginal
-        li $t6, 10
-        add $t5, $t5, $t6               # Add 10 to number
+        addi $t5, $t5, 10               # Add 10 to number
         add $s5, $s5, $t5               # Add to totalNew
         
         bgt $t5, 255, clamp        # branch if value is greater than 255
@@ -94,7 +93,7 @@ main:
     end_of_line: 
         #turn ascii back to int, while copying into output_data
         
-        la $t3, output_data       # points to output_data
+        move $t3, output_data       # points to output_string
         la $t4, stack               # initialize a stack 
         li $t6, 0                   # Stack pointer
             convert_loop:
@@ -107,7 +106,7 @@ main:
                 #Push digit onto stack
                 sb $t8, 0($t4)
                 addi $t4, $t4, 1
-                addi $t6, $t6, 1
+                addi $t6, &t6, 1
                 
                 bnez $t7, convert_loop # Repeat loop if quotient is not zero
         
@@ -130,18 +129,18 @@ main:
         li $v0, 15                      # write to file
         move $a0, $s1                   # output file descriptor
         la $a1, output_data             # buffer to write
-        li $a2, 100                   # number of bytes to write
+        li $a2, 5                   # number of bytes to write
         syscall
         
         addi $t0, $t0, 1      # move to next number
         
-        li $t5, 0             #make $t5 zero again
+        move $t5, $zero             #make $t5 zero again
         
         #clear memory of output_data
         la $a0, output_data     # buffer address
-        li $t6, 100               # number of bytes
+        li $t6, 5               # number of bytes
         
-        addi $t6, $a0, 100        # calculate the end address
+        addi $t6, $a0, 5        # calculate the end address
         clear_loop:
             sb $t5, 0($a0)      # Store 0 in specific point in output_data
             addi $a0, $a0, 1    # Move to next byte
@@ -166,24 +165,25 @@ main:
         la $t1, new_average     #address of new average
         
         #convert values to floating point
-        mtc1 $s4, $f2
-        mtc1 $s5, $f4
-        mtc1 $s6, $f6
+        mtc1 $s4, $f0
+        mtc1 $s5, $f1
+        mtc1 $s6, $f2
         
         #convert to double
+        cvt.d.w $f0, $f0
+        cvt.d.w $f1, $f1
         cvt.d.w $f2, $f2
-        cvt.d.w $f4, $f4
-        cvt.d.w $f6, $f6
         
         #calculate averages
-        div.d $f8, $f2, $f6
-        div.d $f10, $f4, $f6
+        div.d $f3, $f0, $f2
+        div.d $f4, $f1, $f2
         
         #store back into memory
-        sdc1 $f8, old_average
-        sdc1 $f10, new_average
+        sdc1 $f3, old_average
+        sdc1 $f4, new_average
     
     print_averages:
+    
         li $v0, 4
         la $a0, message1            # message for old average
         syscall
@@ -194,7 +194,7 @@ main:
         
         # New line
         li $v0,4
-        la $a0, newline    
+        la $a0, "\n"    
         syscall
     
         li $v0, 4
