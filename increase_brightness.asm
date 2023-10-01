@@ -1,9 +1,9 @@
 .data
+input_file:  .asciiz "/Users/kudzainyika/Desktop/ArchAssignment/input_file.txt"
+output_file: .asciiz "/Users/kudzainyika/Desktop/ArchAssignment/output_file.txt"
 message1: .asciiz "Average pixel value of original image:\n"
 message2: .asciiz "Average pixel value of new image:\n"
 buffer:      .space  49165
-input_file:  .asciiz "input_file.ppm"
-output_file: .asciiz "output_file.ppm"
 output_data:  .space  100
 stack: .space 100
 totalOriginalPixels:  .word 0     # value of original pixels added up
@@ -13,6 +13,7 @@ old_average: .double 0.0
 new_average: .double 0.0
 first_four_lines: .asciiz "P3\n# Jet\n64 64\n255\n"
 newline: .asciiz "\n"
+buffer_reverse: .space 100
 
 .text
 .globl main
@@ -21,34 +22,31 @@ main:
         la $s4, totalOriginalPixels
         la $s5, totalNewPixels
         la $s6, totalToDivideBy
+        li $s3, 10 # ASCII value for newline
         
         # Open file for reading
         li $v0, 13          # open file
         la $a0, input_file  # load address of input file name
         li $a1, 0           # open for reading (O_RDONLY - open for reading only)     
-        li $a2, 0           # mode (ignored for O_RDONLY)
         syscall
         move $s0, $v0       # save input file descriptor
         
-        # Open file for writing 
-        li $v0, 13          # syscall: open file
-        la $a0, output_file  # load address of output file
-        li $a1, 577           # open for writing (write only or create)
-        li $a2, 0           # mode
-        syscall
         
-        move $s1, $v0          # save output file descriptor
+        #read file into buffer
+        li $v0, 14              # read_file syscall code = 14
+        move $a0,$s0            # file descriptor
+        la $a1, buffer       # buffer that holds the string of the WHOLE file
+        la $a2, 49165            # hardcoded buffer length
+        syscall     
+        
+        #open output file
+        li $v0, 13              # open_file syscall code = 13
+        la $a0, output_file        # get the file name
+        li $a1, 1               # file flag = write (1)
+        syscall
+        move $s1, $v0           #save file descriptor. $s0 = file
      
         li $t9, 10       #used for conversion of ascii to int
-        
-    read_file_into_buffer:
-        li $s3, 10 # ASCII value for newline
-        li $v0, 14      
-        la $a1, buffer  #buffer to read into
-        li $a2, 49165    #number of bytes to read 
-        syscall         
-        
-        
         la $t0, buffer      #load address of the buffer
         li $t5, 0           #stores current pixel value
     
@@ -92,36 +90,56 @@ main:
         j end_of_line
     
     end_of_line: 
-        #turn ascii back to int, while copying into output_data
+        la $t3, output_data         # where the final string will be stored
+        li $t6, 0                   # Counter for number of digits
+        li $t9, 10                  # For division to extract digits
         
-        la $t3, output_data       # points to output_data
-        la $t4, stack               # initialize a stack 
-        li $t6, 0                   # Stack pointer
-            convert_loop:
-                div $t5, $t9        # divide $t5 by 10
-                mflo $t7            # move quotient to $t7
-                mfhi $t8            # move remainder to $t8
-                
-                addi $t8, $t8, '0'  # Convert remainder to integer
-                
-                #Push digit onto stack
-                sb $t8, 0($t4)
-                addi $t4, $t4, 1
-                addi $t6, $t6, 1
-                
-                bnez $t7, convert_loop # Repeat loop if quotient is not zero
+        la $t7, buffer_reverse      # t7 to store digits in reverse order
         
-        #Pop digits from stack, append to output string
-        pop_loop:
-            beqz $t6, end_of_conversion     #if stack empty, exit loop
+        # Convert number to ascii and write to output_file
+        convert_loop:
+            # If the number is zero and we have not processed any digits yet, skip the loop
+            beq $t5, $zero, end_of_conversion
+            beqz $t6, skip_zero_check
+            beq $t5, $zero, copy_string
+        
+        skip_zero_check:
+            # Get remainder    
+            rem $t8, $t5, $t9
             
-            addi $t4, $t4, -1 # move stack pointer back
-            lb $t2, 0($t4)    # pop a digit from the stack
-            sb $t2, 0($t3)    # store digit in output string
-            addi $t3, $t3, 1  # move to next space in output string
+            # Convert to ASCII
+            addi $t8, $t8, '0'
             
-            addi $t6, $t6, -1 #decrement stack pointer
-            j pop_loop
+            # Store it in buffer in reverse
+            sb $t8, 0($t7)
+            addi $t7, $t7, 1            # Move to next position in buffer_reverse
+            addi $t6, $t6, 1            # Increment the digit count
+            
+            # Remove the last digit from the number
+            div $t5, $t5, $t9
+            mflo $t5                    # Get quotient
+            j convert_loop
+            
+        copy_string:
+            # If no digits processed, the number was 0
+            beqz $t6, store_zero
+            
+            # Copy string from buffer_reverse to output_data in correct order
+            addi $t7, $t7, -1
+            
+        copy_loop:
+            lb $t8, 0($t7)
+            sb $t8, 0($t3)
+            addi $t3, $t3, 1      # Move to the next position in output_data
+            addi $t7, $t7, -1     # Move to previous position in buffer_reverse
+            addi $t6, $t6, -1
+            bnez $t6, copy_loop   # Repeat til all digits are copied
+            j end_of_conversion
+        store_zero:
+            # Store the digit '0' for the number 0
+            li $t8, '0'
+            sb $t8, 0($t3)
+            addi $t3, $t3, 1
         
     end_of_conversion:
         # Append newline character
